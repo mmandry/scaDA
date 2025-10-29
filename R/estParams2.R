@@ -47,7 +47,7 @@ estParams2 <- function(object, contrl.loc,case.loc){
   tstats = NULL
 
   pb <- progress_bar$new(
-    format = "  [:bar] :percent :elapsedfull",
+    format = "  [:bar] :percent :elapsedfull /n",
     total = npeak, clear = FALSE, width = 60
   )
 
