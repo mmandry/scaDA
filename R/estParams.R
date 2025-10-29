@@ -55,7 +55,7 @@ estParams <- function(object, group.1=NULL, group.2=NULL){
   pval_zinb3p <- NULL
   tstats <- NULL
   pb <- progress_bar$new(
-    format = "  [:bar] :percent :elapsedfull",
+    format = "  [:bar] :percent :elapsedfull \n",
     total = npeak, clear = FALSE, width = 60
   )
   suppressWarnings({
