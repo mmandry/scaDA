@@ -1,12 +1,13 @@
 #' optimization of mu and phi parameters
 #'
 #' @param object scaDAdataset object
+#' @param ncores Number of cores to use. Defaults to all cores - 2.
 #'
 #' @return scaDAdataset object
 #' @export
-#' @import parallel
+#' @import BiocParallel
 #' @importFrom stats optimise pchisq p.adjust
-#' @importFrom progress progress_bar
+#'
 optParamsParallel <- function(object, ncores = NULL) {
   message("start optimize parameter estimates")
 
@@ -31,15 +32,29 @@ optParamsParallel <- function(object, ncores = NULL) {
   tol <- 1e-3
   nitr <- 10
 
-  # Setting up parallel backend
+  # === MODIFICATION START ===
+  # Setting up BiocParallel backend
   if (is.null(ncores)) {
     ncores <- parallel::detectCores() - 2
+    if (is.na(ncores) || ncores < 1) ncores <- 1 # Safety check
   }
-  cl <- parallel::makeCluster(ncores)
-  parallel::clusterExport(cl, c("dat", "cond1Col", "cond2Col", "nitr", "tol", "est_params_cell1", "est_params_cell2", "zinb.loglink"),envir = environment())
+  
+  message(paste("Using BiocParallel with", ncores, "workers (MulticoreParam/forking)."))
+  
+  # Use MulticoreParam for fork-based memory sharing.
+  # This avoids the massive memory copy of clusterExport.
+  # progressbar = TRUE will add a text-based progress bar.
+  BPPARAM <- BiocParallel::MulticoreParam(workers = ncores, 
+                                          progressbar = TRUE)
+
+  # NO makeCluster or clusterExport NEEDED.
+  # Forked workers inherit the parent R environment, solving the OOM.
+  # === MODIFICATION END ===
+
 
   # Parallelize optimization for condition 1
-  results_c1 <- parallel::parLapply(cl, 1:npeak, function(i) {
+  message("Optimizing parameters for condition 1...")
+  results_c1 <- BiocParallel::bplapply(1:npeak, function(i) {
     counts <- dat[i, cond1Col]
     prev <- est_params_cell1[i,]$p0
     nb_mu <- est_params_cell1[i,]$mu
@@ -55,13 +70,15 @@ optParamsParallel <- function(object, ncores = NULL) {
       }
     }
     return(list(mu = nb_mu, prev = prev))
-  })
+  }, BPPARAM = BPPARAM) # <-- Pass BPPARAM here
+
   # Process results for condition 1
   mu_opt_c1 <- sapply(results_c1, function(x) x$mu)
   prev_opt_c1 <- sapply(results_c1, function(x) x$prev)
 
   # Parallelize optimization for condition 2
-  results_c2 <- parallel::parLapply(cl, 1:npeak, function(i) {
+  message("Optimizing parameters for condition 2...")
+  results_c2 <- BiocParallel::bplapply(1:npeak, function(i) {
     counts <- dat[i, cond2Col]
     prev <- est_params_cell2[i,]$p0
     nb_mu <- est_params_cell2[i,]$mu
@@ -77,15 +94,18 @@ optParamsParallel <- function(object, ncores = NULL) {
       }
     }
     return(list(mu = nb_mu, prev = prev))
-  })
+  }, BPPARAM = BPPARAM) # <-- Pass BPPARAM here
 
   # Process results for condition 2
   mu_opt_c2 <- sapply(results_c2, function(x) x$mu)
   prev_opt_c2 <- sapply(results_c2, function(x) x$prev)
 
-  parallel::stopCluster(cl)
+  # === MODIFICATION START ===
+  # parallel::stopCluster(cl) # No longer needed!
+  # === MODIFICATION END ===
 
   # updates parameter estimates
+  message("Calculating final statistics...")
   est_params_cell1$mu <- mu_opt_c1
   est_params_cell1$p0 <- prev_opt_c1
   est_params_cell2$mu <- mu_opt_c2
@@ -136,5 +156,7 @@ optParamsParallel <- function(object, ncores = NULL) {
                         param_g2 = est_params_cell2)
   # save DA test results to object@result slot
   object@result <- result
+  
+  message("Done.")
   return(object)
 }
