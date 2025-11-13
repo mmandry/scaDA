@@ -3,6 +3,7 @@
 #' @param object scaDAdataset object
 #' @param group.1 cell type 1
 #' @param group.2 cell type 2
+#' @param BPPARAM optional BiocParallel parameter (default = MulticoreParam())
 #'
 #' @return a scaDAdataset object contains parameter estimates in params slot
 #' @export
