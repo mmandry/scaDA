@@ -11,8 +11,18 @@
 #' @importFrom progress progress_bar
 #' @importFrom BiocParallel bplapply MulticoreParam
 
-estParamsParallel <- function(object, group.1=NULL, group.2=NULL, BPPARAM=BiocParallel::MulticoreParam(progressbar=TRUE)) {
+estParamsParallel <- function(object, group.1=NULL, group.2=NULL, ncores = NULL) {
   message("start initial parameter estimates")
+
+  if (is.null(ncores)) {
+    ncores <- parallel::detectCores() - 2
+    if (is.na(ncores) || ncores < 1) ncores <- 1 # Safety check
+  }
+  
+  message(paste("Using BiocParallel with", ncores, "workers (MulticoreParam/forking)."))
+  
+  BPPARAM <- BiocParallel::MulticoreParam(workers = ncores, 
+                                          progressbar = TRUE)
 
   count <- object@count
   peak_names <- rownames(count)
