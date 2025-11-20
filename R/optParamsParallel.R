@@ -58,8 +58,13 @@ optParamsParallel <- function(object, ncores = NULL) {
     counts <- dat[i, cond1Col]
     prev <- est_params_cell1[i,]$p0
     nb_mu <- est_params_cell1[i,]$mu
-    max.mu <- max(est_params_cell1$mu)
+    
+    # Allow mu to go up to the max raw count, regardless of initialization
+    current_max_count <- max(counts)
+    max.mu <- max(max(param_df$mu), current_max_count + 10)
+    
     nb_phi <- est_params_cell1[i,]$phi
+    
     for (k in 1:nitr) {
       prev0 <- prev
       nb_mu0 <- nb_mu
