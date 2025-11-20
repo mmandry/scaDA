@@ -39,7 +39,8 @@ optParams <- function(object){ ## output phi is dispersion
     counts <- dat[i,cond1Col]
     prev <- est_params_cell1[i,]$p0
     nb_mu <- est_params_cell1[i,]$mu
-    max.mu <- max(est_params_cell1$mu)
+    current_data_max <- max(counts) 
+    max.mu <- max(max(est_params_cell1$mu), current_data_max + 10)
     nb_phi <- est_params_cell1[i,]$phi
     pb$tick()
     for (k in 1:nitr){
