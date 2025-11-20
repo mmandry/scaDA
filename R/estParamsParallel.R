@@ -11,7 +11,7 @@
 #' @importFrom progress progress_bar
 #' @importFrom BiocParallel bplapply MulticoreParam
 
-estParamsParallel <- function(object, group.1=NULL, group.2=NULL, BPPARAM=MulticoreParam()) {
+estParamsParallel <- function(object, group.1=NULL, group.2=NULL, BPPARAM=BiocParallel::MulticoreParam(progressbar=TRUE)) {
   message("start initial parameter estimates")
 
   count <- object@count
@@ -39,15 +39,12 @@ estParamsParallel <- function(object, group.1=NULL, group.2=NULL, BPPARAM=Multic
   sfs_pooled <- sfs[c(group.1.loc, group.2.loc)]
   sfs_cell1 <- sfs[group.1.loc]
   sfs_cell2 <- sfs[group.2.loc]
+  
+  # Ensure zinb.loglink is available to workers
+  # If it's internal to scaDA, you might need to export it or access via :::
+  # zinb.loglink <- scaDA:::zinb.loglink 
 
-  # Initialize progress bar
-  pb <- progress_bar$new(
-    format = "  [:bar] :percent :elapsedfull",
-    total = npeak, clear = FALSE, width = 60
-  )
-  pb$tick(0)
-
-  # Define worker function for each peak
+  # Define worker function
   fit_one_peak <- function(i) {
     counts_pooled <- as.numeric(dat[i, ])
     counts_cell1 <- counts_pooled[cond1Col]
@@ -65,8 +62,7 @@ estParamsParallel <- function(object, group.1=NULL, group.2=NULL, BPPARAM=Multic
       mu1 <- exp(m1$coefficients$count)
       theta1 <- min(m1$theta, 150)
       p01 <- plogis(m1$coefficients$zero)
-      logL_null <- zinb.loglink(counts=counts_pooled, p=p01, u=mu1, k=1/theta1)
-
+      
       # group1
       m2 <- pscl::zeroinfl(counts ~ 1 + offset(log(sfs_cell1)) | 1 + offset(log(sfs_cell1)),
                            data = data.frame(counts = counts_cell1),
@@ -74,8 +70,7 @@ estParamsParallel <- function(object, group.1=NULL, group.2=NULL, BPPARAM=Multic
       mu2 <- exp(m2$coefficients$count)
       theta2 <- min(m2$theta, 150)
       p02 <- plogis(m2$coefficients$zero)
-      logL_alter_1 <- zinb.loglink(counts=counts_cell1, p=p02, u=mu2, k=1/theta2)
-
+      
       # group2
       m3 <- pscl::zeroinfl(counts ~ 1 + offset(log(sfs_cell2)) | 1 + offset(log(sfs_cell2)),
                            data = data.frame(counts = counts_cell2),
@@ -83,30 +78,19 @@ estParamsParallel <- function(object, group.1=NULL, group.2=NULL, BPPARAM=Multic
       mu3 <- exp(m3$coefficients$count)
       theta3 <- min(m3$theta, 150)
       p03 <- plogis(m3$coefficients$zero)
-      logL_alter_2 <- zinb.loglink(counts=counts_cell2, p=p03, u=mu3, k=1/theta3)
 
-      logL_alter <- logL_alter_1 + logL_alter_2
-      test.stats <- -2 * (logL_null - logL_alter)
-      pvl <- pchisq(test.stats, df = 3, lower.tail = FALSE)
-
+      # We return only what is needed for the params slot
       list(mu = c(mu1, mu2, mu3),
            theta = c(theta1, theta2, theta3),
-           p0 = c(p01, p02, p03),
-           pval = pvl,
-           tstat = test.stats)
+           p0 = c(p01, p02, p03))
     }, error = function(e) {
-      # Return NAs for failed fits
-      list(mu = rep(NA,3), theta = rep(NA,3), p0 = rep(NA,3),
-           pval = NA, tstat = NA)
+      list(mu = rep(NA,3), theta = rep(NA,3), p0 = rep(NA,3))
     })
   }
 
   # Run parallel loop
-  results <- bplapply(seq_len(npeak), function(i) {
-    res <- fit_one_peak(i)
-    pb$tick()
-    res
-  }, BPPARAM = BPPARAM)
+  # Progress bar is handled by BPPARAM
+  results <- BiocParallel::bplapply(seq_len(npeak), fit_one_peak, BPPARAM = BPPARAM)
 
   # Combine results
   est_params_pooled <- data.frame(mu = sapply(results, function(x) x$mu[1]),
