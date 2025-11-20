@@ -26,8 +26,15 @@ estParamsParallel <- function(object, group.1=NULL, group.2=NULL, ncores = NULL)
 
   count <- object@count
   peak_names <- rownames(count)
-  sfs <- apply(count, 2, mean)
+
+  message("Calculating scaling factors...")
+  if (inherits(count, "dgCMatrix")) {
+      sfs <- Matrix::colMeans(count)
+  } else {
+      sfs <- colMeans(count)
+  }
   sfs <- sfs / median(sfs)
+
 
   if (is.null(group.2)) {
     cells_loc <- sample.loc(object=object, group.1=group.1, method="balanced")
