@@ -29,8 +29,8 @@ optParamsParallel <- function(object, ncores = NULL) {
   est_params_cell1 <- data.frame(object@params$param_g1)
   est_params_cell2 <- data.frame(object@params$param_g2)
 
-  tol <- 1e-3
-  nitr <- 10
+  tol <- 1e-2
+  nitr <- 5
 
   # === MODIFICATION START ===
   # Setting up BiocParallel backend
