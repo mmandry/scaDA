@@ -163,6 +163,15 @@ optParamsParallel <- function(object, ncores = NULL) {
   
   result <- data.frame(peakID=peak_names, tstats=tstats, pval=pval_zinb_shrink_opt)
   result$FDR <- p.adjust(result$pval, method='fdr')
+
+  # === DEBUG PRINTS ===
+  message("--- DEBUG: Result DataFrame Stats ---")
+  message(paste("Rows:", nrow(result)))
+  message(paste("Cols:", ncol(result)))
+  message(paste("Head of peakID:", paste(head(result$peakID), collapse=",")))
+  message(paste("Number of NA p-values:", sum(is.na(result$pval))))
+  message("-------------------------------------")
+
   
   m1 <- (1 - est_params_cell1$p0) * est_params_cell1$mu
   m2 <- (1 - est_params_cell2$p0) * est_params_cell2$mu
