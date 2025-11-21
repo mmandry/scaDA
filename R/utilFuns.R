@@ -33,19 +33,46 @@ sample.loc <- function(object,group.1,method=c("balanced","unbalanced")){
 
 
 #loglikelihood function for ZINB
-zinb.loglink <- function(counts,p,u,k){
+zinb.loglink <- function(counts, p, u, k) {
   counts <- as.numeric(counts)
-  dens <- numeric(length(counts))
-  for (i in 1:length(counts)){
-    if (counts[i]==0){
-      dens[i] <- p+(1-p)*(1/(1+k*u))^(1/k)
-    } else {
-      g <- gamma(counts[i]+1/k)/(gamma(1/k)*gamma(counts[i]+1))
-      dens[i] <- (1-p)*g*(1/(1+k*u))^(1/k)*((k*u)/(1+k*u))^counts[i]
-    }
-    dens <- unlist(dens)
+  n <- length(counts)
+  
+  # Pre-calculate common terms
+  inv_k <- 1/k
+  denom_term <- (1 / (1 + k * u))^(inv_k)
+  
+  # Initialize density vector
+  dens <- numeric(n)
+  
+  # Identify zeros and non-zeros
+  is_zero <- counts == 0
+  
+  # --- Logic for Zeros ---
+  # P(Y=0) = p + (1-p) * (1 / (1+k*u))^(1/k)
+  if (any(is_zero)) {
+    dens[is_zero] <- p + (1 - p) * denom_term
   }
-  loglink <- sum(log(dens))
+  
+  # --- Logic for Non-Zeros ---
+  # P(Y=y) = (1-p) * Gamma(...) * ...
+  if (any(!is_zero)) {
+    nz_counts <- counts[!is_zero]
+    
+    # Calculate Gamma term
+    # g = gamma(y + 1/k) / (gamma(1/k) * gamma(y + 1))
+    # Using lgamma is numerically safer and faster
+    log_g <- lgamma(nz_counts + inv_k) - (lgamma(inv_k) + lgamma(nz_counts + 1))
+    g <- exp(log_g)
+    
+    # Calculate probability
+    term2 <- ((k * u) / (1 + k * u))^nz_counts
+    dens[!is_zero] <- (1 - p) * g * denom_term * term2
+  }
+  
+  # Sum of logs
+  # Add small constant to avoid log(0) if density is effectively 0
+  loglink <- sum(log(dens + 1e-300))
+  
   return(loglink)
 }
 
