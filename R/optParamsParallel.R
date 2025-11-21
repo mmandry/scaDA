@@ -1,18 +1,6 @@
-#' optimization of mu and phi parameters
-#'
-#' @param object scaDAdataset object
-#' @param ncores Number of cores to use. Defaults to all cores - 2.
-#'
-#' @return scaDAdataset object
-#' @export
-#' @import BiocParallel
-#' @importFrom stats optimise pchisq p.adjust
-#'
-#' Optimized Parallel ZINB for scATAC (Fixed for NaN Propagation)
 optParamsParallel <- function(object, ncores = NULL) {
   message("start optimize parameter estimates")
 
-  # --- 1. Setup Parallel Backend ---
   if (is.null(ncores)) {
     ncores <- parallel::detectCores() - 2
     if (is.na(ncores) || ncores < 1) ncores <- 1 
@@ -27,7 +15,6 @@ optParamsParallel <- function(object, ncores = NULL) {
   group.1.loc <- object@params$g1
   group.2.loc <- object@params$g2
 
-  # Keep 'dat' SPARSE
   dat <- count[,c(group.1.loc, group.2.loc)]
   npeak <- dim(dat)[1]
   nsam <- dim(dat)[2]
@@ -43,80 +30,80 @@ optParamsParallel <- function(object, ncores = NULL) {
   tol <- 1e-2 
   nitr <- 5   
 
-  # --- Helper Function for Optimization ---
+  # --- Helper Function ---
   optimize_row <- function(i, col_indices, param_df) {
     
-    # 1. Load Parameters
     prev <- param_df[i,]$p0
     nb_mu <- param_df[i,]$mu
     nb_phi <- param_df[i,]$phi
     
-    # Check Input NAs
-    if (is.na(prev) || is.na(nb_mu) || is.na(nb_phi)) {
+    # 1. Input Safety
+    if (length(prev) == 0 || is.na(prev) || is.na(nb_mu) || is.na(nb_phi)) {
         return(list(mu = NA, prev = NA))
     }
 
     counts <- as.numeric(dat[i, col_indices])
-    
-    # 2. Zero-Count Safety
     if(sum(counts) == 0) return(list(mu = 1e-6, prev = 1))
 
-    # 3. Bounds Logic
     current_max_count <- max(counts)
-    # Ensure max.mu is finite
     max.mu <- max(max(param_df$mu, na.rm=TRUE), current_max_count + 10) 
-    if(!is.finite(max.mu)) max.mu <- 100 # Fallback safety
+    if(!is.finite(max.mu)) max.mu <- 100
 
     for (k in 1:nitr) {
       prev0 <- prev
       nb_mu0 <- nb_mu
       
-      # --- Optimize Mu with NaN Protection ---
+      # Optimize Mu
       res_mu <- try({
         optimise(zinb.loglink, c(0.01, max.mu), tol = 1e-4, maximum = TRUE, 
                           counts = counts, p = prev0, k = nb_phi)$maximum
       }, silent=TRUE)
       
-      # Only update if result is valid number
       if (!inherits(res_mu, "try-error") && is.finite(res_mu)) {
         nb_mu <- res_mu
       } else {
-        # If optimization failed or returned NaN, keep previous value
         nb_mu <- nb_mu0
       }
       
-      # --- Optimize Prev with NaN Protection ---
+      # Optimize Prev
       res_prev <- try({
         optimise(zinb.loglink, c(0.01, 1), tol = 1e-4, maximum = TRUE, 
                          counts = counts, u = nb_mu, k = nb_phi)$maximum
       }, silent=TRUE)
       
-      # Only update if result is valid number
       if (!inherits(res_prev, "try-error") && is.finite(res_prev)) {
         prev <- res_prev
       } else {
         prev <- prev0
       }
 
-      # --- Convergence Check (Now Safe) ---
-      # Even with protections, we double check for NA before the 'if'
-      if (is.na(nb_mu) || is.na(prev)) {
-         # This should ideally never happen due to checks above, but as a final failsafe:
+      # === LOGIC HARDENING: PREVENT IF(NA) CRASH ===
+      
+      # 1. Check validity immediately
+      if (is.na(nb_mu) || is.na(prev) || is.na(nb_mu0) || is.na(prev0)) {
          break 
       }
 
-      # Division by zero protection added to denominator
-      diff_mu <- abs(nb_mu0 - nb_mu) / (abs(nb_mu0) + 1e-6)
-      diff_prev <- abs(prev0 - prev) / (abs(prev0) + 1e-6)
+      # 2. Calculate diffs safely OUTSIDE the 'if' condition
+      # Adding a small epsilon to denominator prevents div-by-zero if params are 0
+      diff_mu <- abs(nb_mu0 - nb_mu) / (abs(nb_mu0) + 1e-9)
+      diff_prev <- abs(prev0 - prev) / (abs(prev0) + 1e-9)
+      
+      # 3. Check if diffs are valid
+      if (is.na(diff_mu) || is.na(diff_prev)) {
+          break
+      }
 
+      # 4. Only now do we run the condition
       if (diff_mu < tol && diff_prev < tol) {
         break
       }
+      # =============================================
     }
     return(list(mu = nb_mu, prev = prev))
   }
 
-  # --- Optimization Loops ---
+  # --- Loops ---
   message("Optimizing parameters for condition 1...")
   results_c1 <- BiocParallel::bplapply(1:npeak, function(i) {
     optimize_row(i, cond1Col, est_params_cell1)
@@ -133,7 +120,7 @@ optParamsParallel <- function(object, ncores = NULL) {
   mu_opt_c2 <- sapply(results_c2, function(x) x$mu)
   prev_opt_c2 <- sapply(results_c2, function(x) x$prev)
 
-  # --- Statistics ---
+  # --- Stats ---
   message("Calculating final statistics...")
   est_params_cell1$mu <- mu_opt_c1
   est_params_cell1$p0 <- prev_opt_c1
@@ -145,34 +132,27 @@ optParamsParallel <- function(object, ncores = NULL) {
   tstats <- numeric(npeak)
 
   for (i in 1:npeak){
-    # Handle NAs in final stats calculation
-    if (is.na(est_params_cell1$mu[i]) || is.na(est_params_cell2$mu[i])) {
+    if (length(est_params_cell1$mu[i]) == 0 || is.na(est_params_cell1$mu[i]) || 
+        length(est_params_cell2$mu[i]) == 0 || is.na(est_params_cell2$mu[i])) {
         tstats[i] <- 0
         pval_zinb_shrink_opt[i] <- 1.0
         next 
     }
 
-    # Explicit numeric conversion
     counts_pool <- as.numeric(dat[i, poolCol])
     counts_c1   <- as.numeric(dat[i, cond1Col])
     counts_c2   <- as.numeric(dat[i, cond2Col])
 
-    # Wrap Likelihood calculations in tryCatch as well to prevent 'Infinite' log errors
     tryCatch({
         logL_null <- zinb.loglink(counts=counts_pool, p=est_params_pooled[i,]$p0, 
                                   u=est_params_pooled[i,]$mu, k=est_params_pooled[i,]$phi)
-
         logL_alter_1 <- zinb.loglink(counts=counts_c1, p=est_params_cell1[i,]$p0, 
                                      u=est_params_cell1[i,]$mu, k=est_params_cell1[i,]$phi)
-
         logL_alter_2 <- zinb.loglink(counts=counts_c2, p=est_params_cell2[i,]$p0, 
                                      u=est_params_cell2[i,]$mu, k=est_params_cell2[i,]$phi)
-        
         logL_alter <- logL_alter_1 + logL_alter_2
-
         stat_val <- -2*(logL_null - logL_alter)
-        if(is.na(stat_val) || stat_val < 0) stat_val <- 0 
-        
+        if(length(stat_val) == 0 || is.na(stat_val) || stat_val < 0) stat_val <- 0 
         tstats[i] <- stat_val
         pval_zinb_shrink_opt[i] <- pchisq(stat_val, df=3, lower.tail = FALSE)
     }, error = function(e) {
@@ -189,13 +169,10 @@ optParamsParallel <- function(object, ncores = NULL) {
   foch <- (m2 + 1e-6) / (m1 + 1e-6) 
   result$log2fc <- log2(foch)
   
-  object@params <- list(g1 = group.1.loc,
-                        g2 = group.2.loc,
+  object@params <- list(g1 = group.1.loc, g2 = group.2.loc,
                         param_pooled = object@params$param_pooled,
-                        param_g1 = est_params_cell1,
-                        param_g2 = est_params_cell2)
+                        param_g1 = est_params_cell1, param_g2 = est_params_cell2)
   object@result <- result
-  
   message("Done.")
   return(object)
 }
