@@ -52,6 +52,12 @@ optParamsParallel <- function(object, ncores = NULL) {
 
   # --- Helper Function for Optimization ---
   optimize_row <- function(i, col_indices, param_df) {
+    
+    # If the previous steps (estParams/shrinkDisp) failed, these will be NA.
+    # We cannot optimize NA. Return NA immediately.
+    if (is.na(prev) || is.na(nb_mu) || is.na(nb_phi)) {
+        return(list(mu = NA, prev = NA))
+    }
     # Explicitly convert sparse row to numeric vector to avoid S4 overhead in loop
     counts <- as.numeric(dat[i, col_indices])
     
@@ -123,6 +129,14 @@ optParamsParallel <- function(object, ncores = NULL) {
 
   # Regular loop is fine for this part (fast vector math)
   for (i in 1:npeak){
+    
+    # Handle NAs in final stats calculation too!
+    if (is.na(est_params_cell1$mu[i]) || is.na(est_params_cell2$mu[i])) {
+        tstats[i] <- 0
+        pval_zinb_shrink_opt[i] <- 1.0
+        next # Skip to next peak
+    }
+    
     # Explicit numeric conversion again for safety
     counts_pool <- as.numeric(dat[i, poolCol])
     counts_c1   <- as.numeric(dat[i, cond1Col])
